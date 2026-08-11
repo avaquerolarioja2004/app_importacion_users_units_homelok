@@ -1,0 +1,2 @@
+﻿unit,nombre_acceso,nombre_grupo_cerraduras,dias,horario_in,horario_out
+"Prueba, 1ºA",COMUNES TODOS,Test,LUNES;MARTES;MIERCOLES;JUEVES;VIERNES;SABADO;DOMINGO,08:00,21:00

@@ -243,10 +243,44 @@ class ImporterApp:
         )
         self.clear_button.pack(side="left", padx=4, ipadx=14, ipady=4)
 
+        self.update_button = ttk.Button(
+            actions,
+            text="🔄  Actualizar",
+            command=self._start_update
+        )
+        self.update_button.pack(side="left", padx=4, ipadx=14, ipady=4)
+
         self.progress = ttk.Progressbar(
             actions, mode="indeterminate", length=160
         )
         self.progress.pack(side="right", padx=4)
+
+        # ---------------------------------------------------------
+        # OPCIONES DE ACTUALIZACIÓN (solo afectan al botón
+        # "Actualizar"). Usa el mismo fichero access.csv que ya
+        # se ha seleccionado arriba como origen de los accesos
+        # deseados para cada unit.
+        # ---------------------------------------------------------
+
+        update_opts = ttk.LabelFrame(
+            main, text="Opciones de Actualizar (usa access.csv de arriba)"
+        )
+        update_opts.pack(fill="x", **pad)
+
+        self.update_add_var = tk.BooleanVar(value=True)
+        self.update_remove_var = tk.BooleanVar(value=False)
+
+        ttk.Checkbutton(
+            update_opts,
+            text="Añadir accesos nuevos que estén en el CSV y el usuario no tenga",
+            variable=self.update_add_var
+        ).pack(anchor="w", padx=8, pady=(4, 0))
+
+        ttk.Checkbutton(
+            update_opts,
+            text="Borrar accesos antiguos que el usuario tenga y ya NO estén en el CSV",
+            variable=self.update_remove_var
+        ).pack(anchor="w", padx=8, pady=(0, 4))
 
         # ---------------------------------------------------------
         # LOG
@@ -362,6 +396,7 @@ class ImporterApp:
 
         self.run_button.config(state=state)
         self.clear_button.config(state=state)
+        self.update_button.config(state=state)
 
         if running:
             self.progress.start(12)
@@ -504,6 +539,68 @@ class ImporterApp:
             )
 
             importer.run(units_path, access_path, users_path)
+
+            self.msg_queue.put(("done", True, None))
+
+        except Exception as e:
+
+            self.msg_queue.put(("done", False, str(e)))
+
+    def _start_update(self):
+
+        creds = self._get_credentials()
+
+        if not creds:
+            return
+
+        access_path = self.access_var.get().strip()
+
+        if not access_path:
+            messagebox.showerror(
+                "Falta fichero",
+                "Selecciona el fichero access.csv arriba "
+                "antes de actualizar."
+            )
+            return
+
+        installation_id, token = creds
+        add_new = self.update_add_var.get()
+        remove_missing = self.update_remove_var.get()
+
+        self._save_current_config()
+        self._set_running(True)
+
+        self.worker_thread = threading.Thread(
+            target=self._run_update_worker,
+            args=(
+                installation_id, token,
+                access_path, add_new, remove_missing
+            ),
+            daemon=True
+        )
+        self.worker_thread.start()
+
+    def _run_update_worker(
+        self, installation_id, token,
+        access_path, add_new, remove_missing
+    ):
+
+        try:
+
+            start_new_log()
+
+            importer = Importer(
+                token=token,
+                installation_id=installation_id
+            )
+
+            rows = importer.read_csv(access_path)
+
+            importer.update_access(
+                rows,
+                add_new=add_new,
+                remove_missing=remove_missing
+            )
 
             self.msg_queue.put(("done", True, None))
 

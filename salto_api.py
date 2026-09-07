@@ -259,6 +259,145 @@ class SaltoAPI:
         )
 
     # =========================================================
+    # LIST USERS DE UNA UNIT
+    # =========================================================
+
+    def list_users(self, unit_name):
+
+        endpoint = f"/{unit_name}/users"
+
+        users = []
+        page_token = None
+
+        while True:
+
+            params = {
+                "page_size": 1000
+            }
+
+            if page_token:
+                params["page_token"] = page_token
+
+            response = self._request(
+                "GET",
+                endpoint,
+                params=params
+            )
+
+            users.extend(
+                response.get(
+                    "users",
+                    []
+                )
+            )
+
+            page_token = response.get(
+                "next_page_token"
+            )
+
+            if not page_token:
+                break
+
+        return users
+
+    # =========================================================
+    # LIST ACCESS RIGHTS DE UNA UNIT
+    # =========================================================
+
+    def list_access_rights(self, unit_name):
+
+        endpoint = f"/{unit_name}/access-rights"
+
+        access_rights = []
+        page_token = None
+
+        while True:
+
+            params = {
+                "page_size": 1000
+            }
+
+            if page_token:
+                params["page_token"] = page_token
+
+            response = self._request(
+                "GET",
+                endpoint,
+                params=params
+            )
+
+            access_rights.extend(
+                response.get(
+                    "access_rights",
+                    []
+                )
+            )
+
+            page_token = response.get(
+                "next_page_token"
+            )
+
+            if not page_token:
+                break
+
+        return access_rights
+
+    # =========================================================
+    # LIST / DELETE USER ACCESS RIGHTS (accesos YA asignados
+    # a un usuario concreto)
+    # =========================================================
+
+    def list_user_access_rights(self, user_name):
+
+        endpoint = f"/{user_name}/access-rights"
+
+        rights = []
+        page_token = None
+
+        while True:
+
+            params = {
+                "page_size": 1000
+            }
+
+            if page_token:
+                params["page_token"] = page_token
+
+            response = self._request(
+                "GET",
+                endpoint,
+                params=params
+            )
+
+            rights.extend(
+                response.get(
+                    "user_access_rights",
+                    []
+                )
+            )
+
+            page_token = response.get(
+                "next_page_token"
+            )
+
+            if not page_token:
+                break
+
+        return rights
+
+    def delete_user_access_right(
+        self,
+        user_access_right_name
+    ):
+
+        endpoint = f"/{user_access_right_name}"
+
+        return self._request_with_retry(
+            "DELETE",
+            endpoint
+        )
+
+    # =========================================================
     # ACCESS POINT GROUPS
     # =========================================================
 

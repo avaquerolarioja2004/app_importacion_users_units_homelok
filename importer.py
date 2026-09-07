@@ -1192,6 +1192,362 @@ class Importer:
             )
 
     # =========================================================
+    # UPDATE (actualizar accesos de usuarios ya existentes)
+    # =========================================================
+    #
+    # A diferencia de run(), update_access() NO crea units ni
+    # usuarios nuevos. Recibe las filas de un CSV con el MISMO
+    # formato que access.csv (unit, nombre_acceso,
+    # nombre_grupo_cerraduras, dias, horario_in, horario_out) y,
+    # para cada unit mencionada:
+    #
+    #   1. Se asegura de que existan los access rights del CSV
+    #      (reutiliza los que ya existan con el mismo nombre,
+    #      crea los que falten).
+    #   2. Recorre TODOS los usuarios que ya existen en esa unit.
+    #   3. Para cada usuario compara sus accesos actuales con los
+    #      del CSV para esa unit:
+    #         - add_new=True    -> asigna los accesos del CSV que
+    #                              el usuario todavía no tiene.
+    #         - remove_missing=True -> borra los accesos que el
+    #                              usuario tiene y que ya NO están
+    #                              en el CSV.
+    #
+    # =========================================================
+
+    def _ensure_units_exist(self, unit_display_names):
+
+        existing_units = self.api.list_units()
+
+        for unit in existing_units:
+
+            display_name = unit.get("display_name")
+            resource_name = unit.get("name")
+
+            if display_name and resource_name:
+
+                self.units[
+                    display_name.strip().lower()
+                ] = resource_name
+
+        missing = [
+            name for name in unit_display_names
+            if name.lower() not in self.units
+        ]
+
+        if missing:
+
+            raise RuntimeError(
+                "Las siguientes units no existen en la "
+                "instalación y no se pueden actualizar "
+                "(usa 'Cargar' primero para crearlas): "
+                + ", ".join(missing)
+            )
+
+    def _ensure_access_rights_for_unit(
+        self,
+        unit_display_name,
+        unit_name,
+        rows
+    ):
+
+        """
+        Se asegura de que existan (reutilizando o creando) los
+        access rights del CSV para una unit concreta.
+
+        Devuelve un dict {nombre_acceso_en_minusculas: resource_name}
+        """
+
+        existing = self.api.list_access_rights(unit_name)
+
+        existing_by_name = {
+            item["display_name"].strip().lower(): item["name"]
+            for item in existing
+            if item.get("display_name") and item.get("name")
+        }
+
+        result = {}
+
+        for row in rows:
+
+            access_name = row["nombre_acceso"].strip()
+            group_name = row["nombre_grupo_cerraduras"].strip()
+
+            key = access_name.lower()
+
+            if key in existing_by_name:
+
+                print(
+                    f"Access right ya existe: "
+                    f"'{access_name}' en '{unit_display_name}'"
+                )
+
+                logger.info(
+                    f"Access right ya existe: "
+                    f"'{access_name}' en '{unit_display_name}' -> "
+                    f"{existing_by_name[key]}"
+                )
+
+                result[key] = existing_by_name[key]
+
+                continue
+
+            days = []
+
+            for day in row["dias"].split(";"):
+
+                day = day.strip().upper()
+
+                if day not in DAY_MAPPING:
+
+                    raise RuntimeError(
+                        f"Día no válido: {day}"
+                    )
+
+                days.append(DAY_MAPPING[day])
+
+            start_hour, start_minute = parse_time(
+                row["horario_in"]
+            )
+
+            end_hour, end_minute = parse_time(
+                row["horario_out"]
+            )
+
+            print(
+                f"Creando access right nuevo -> "
+                f"'{access_name}' en '{unit_display_name}'"
+            )
+
+            logger.info(
+                f"Creando access right nuevo -> "
+                f"'{access_name}' en '{unit_display_name}'"
+            )
+
+            response = self.api.create_access_right(
+                unit_name=unit_name,
+                display_name=access_name,
+                days=days,
+                start_hour=start_hour,
+                start_minute=start_minute,
+                end_hour=end_hour,
+                end_minute=end_minute
+            )
+
+            access_right_name = response["name"]
+
+            group_key = group_name.strip().lower()
+
+            if group_key not in self.access_groups:
+
+                raise RuntimeError(
+                    f"No existe el grupo de puertas "
+                    f"'{group_name}'"
+                )
+
+            self.api.attach_group_to_access_right(
+                access_right_name,
+                self.access_groups[group_key]
+            )
+
+            result[key] = access_right_name
+
+        return result
+
+    def update_access(
+        self,
+        rows,
+        add_new=True,
+        remove_missing=False
+    ):
+
+        print(
+            "\n========== UPDATE: ACCESOS DE USUARIOS =========="
+        )
+
+        logger.warning(
+            f"Iniciando UPDATE "
+            f"(añadir={add_new}, borrar={remove_missing})"
+        )
+
+        # -----------------------------------------------------
+        # AGRUPAR FILAS POR UNIT
+        # -----------------------------------------------------
+
+        rows_by_unit = {}
+
+        for row in rows:
+
+            unit_display_name = row["unit"].strip()
+
+            rows_by_unit.setdefault(
+                unit_display_name, []
+            ).append(row)
+
+        # -----------------------------------------------------
+        # COMPROBAR QUE TODAS LAS UNITS YA EXISTEN
+        # -----------------------------------------------------
+
+        self._ensure_units_exist(
+            rows_by_unit.keys()
+        )
+
+        # -----------------------------------------------------
+        # GRUPOS DE PUERTAS (necesarios para crear access
+        # rights que falten)
+        # -----------------------------------------------------
+
+        self.load_access_groups()
+
+        total_added = 0
+        total_removed = 0
+
+        for unit_display_name, unit_rows in rows_by_unit.items():
+
+            unit_name = self.units[
+                unit_display_name.lower()
+            ]
+
+            print(
+                f"\n---- Unit: {unit_display_name} ----"
+            )
+
+            logger.info(
+                f"Actualizando unit: {unit_display_name}"
+            )
+
+            # ---------------------------------------------------
+            # 1. ACCESS RIGHTS DESEADOS PARA ESTA UNIT
+            # ---------------------------------------------------
+
+            desired = self._ensure_access_rights_for_unit(
+                unit_display_name,
+                unit_name,
+                unit_rows
+            )
+
+            # desired: {nombre_en_minusculas: resource_name}
+
+            # ---------------------------------------------------
+            # 2. USUARIOS ACTUALES DE LA UNIT
+            # ---------------------------------------------------
+
+            users = self.api.list_users(unit_name)
+
+            print(
+                f"Usuarios encontrados en "
+                f"{unit_display_name}: {len(users)}"
+            )
+
+            logger.info(
+                f"Usuarios encontrados en "
+                f"{unit_display_name}: {len(users)}"
+            )
+
+            for user in users:
+
+                user_name = user.get("name")
+
+                display_name = user.get(
+                    "display_name",
+                    user_name
+                )
+
+                if not user_name:
+                    continue
+
+                current = self.api.list_user_access_rights(
+                    user_name
+                )
+
+                current_by_name = {
+                    item["display_name"].strip().lower(): item["name"]
+                    for item in current
+                    if item.get("display_name") and item.get("name")
+                }
+
+                print(
+                    f"\nUsuario: {display_name}"
+                )
+
+                logger.info(
+                    f"Procesando usuario: {display_name}"
+                )
+
+                # -----------------------------------------------
+                # AÑADIR ACCESOS NUEVOS DEL CSV
+                # -----------------------------------------------
+
+                if add_new:
+
+                    for key, access_right_name in desired.items():
+
+                        if key in current_by_name:
+                            continue
+
+                        print(
+                            f"  + Asignando acceso -> {key}"
+                        )
+
+                        self.api.assign_access_right(
+                            user_name,
+                            access_right_name
+                        )
+
+                        logger.info(
+                            f"Acceso asignado a {display_name}: "
+                            f"{key}"
+                        )
+
+                        total_added += 1
+
+                # -----------------------------------------------
+                # BORRAR ACCESOS QUE YA NO ESTÁN EN EL CSV
+                # -----------------------------------------------
+
+                if remove_missing:
+
+                    for key, association_name in current_by_name.items():
+
+                        if key in desired:
+                            continue
+
+                        print(
+                            f"  - Borrando acceso -> {key}"
+                        )
+
+                        self.api.delete_user_access_right(
+                            association_name
+                        )
+
+                        logger.info(
+                            f"Acceso borrado a {display_name}: "
+                            f"{key}"
+                        )
+
+                        total_removed += 1
+
+        print(
+            "\n================================"
+        )
+
+        print(
+            f"UPDATE FINALIZADO "
+            f"(accesos añadidos: {total_added}, "
+            f"accesos borrados: {total_removed})"
+        )
+
+        print(
+            "================================"
+        )
+
+        logger.warning(
+            f"UPDATE FINALIZADO "
+            f"(accesos añadidos: {total_added}, "
+            f"accesos borrados: {total_removed})"
+        )
+
+    # =========================================================
     # CLEAR UNITS
     # =========================================================
 

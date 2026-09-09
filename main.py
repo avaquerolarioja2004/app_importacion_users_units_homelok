@@ -32,11 +32,35 @@ def main():
     )
 
     parser.add_argument(
-        "--no-remove",
+        "--remove-listed",
         action="store_true",
         help=(
-            "En --update, no borrar los accesos que el usuario "
-            "tenga y ya no estén en el CSV"
+            "En --update, borrar los accesos que el usuario "
+            "tenga y que estén indicados en el CSV (por "
+            "defecto solo se borra la asignación al usuario; "
+            "combínalo con --remove-from-unit para borrar el "
+            "access right entero)"
+        )
+    )
+
+    parser.add_argument(
+        "--remove-from-unit",
+        action="store_true",
+        help=(
+            "Junto con --remove-listed: en vez de borrar solo "
+            "la asignación al usuario, borra el access right "
+            "entero a nivel de unit (afecta a TODOS los "
+            "usuarios que lo tuvieran, no solo a los del CSV)"
+        )
+    )
+
+    parser.add_argument(
+        "--remove-missing",
+        action="store_true",
+        help=(
+            "En --update, borrar los accesos que el usuario "
+            "tenga y que NO estén en el CSV (deja al usuario "
+            "solo con los accesos del CSV)"
         )
     )
 
@@ -58,7 +82,9 @@ def main():
             importer.update_access(
                 rows,
                 add_new=not args.no_add,
-                remove_missing=not args.no_remove
+                remove_listed=args.remove_listed,
+                remove_from_unit=args.remove_from_unit,
+                remove_missing=args.remove_missing
             )
 
             return

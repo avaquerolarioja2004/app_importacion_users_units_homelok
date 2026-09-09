@@ -268,7 +268,9 @@ class ImporterApp:
         update_opts.pack(fill="x", **pad)
 
         self.update_add_var = tk.BooleanVar(value=True)
-        self.update_remove_var = tk.BooleanVar(value=False)
+        self.update_remove_listed_var = tk.BooleanVar(value=False)
+        self.update_remove_from_unit_var = tk.BooleanVar(value=False)
+        self.update_remove_missing_var = tk.BooleanVar(value=False)
 
         ttk.Checkbutton(
             update_opts,
@@ -278,8 +280,31 @@ class ImporterApp:
 
         ttk.Checkbutton(
             update_opts,
-            text="Borrar accesos antiguos que el usuario tenga y ya NO estén en el CSV",
-            variable=self.update_remove_var
+            text="Borrar los accesos indicados en el CSV (solo la asignación al usuario)",
+            variable=self.update_remove_listed_var,
+            command=self._on_update_remove_listed_toggle
+        ).pack(anchor="w", padx=8, pady=(4, 0))
+
+        self.update_remove_from_unit_check = ttk.Checkbutton(
+            update_opts,
+            text=(
+                "   ↳ En vez de eso, borrar el acceso entero a nivel "
+                "de unit (afecta a TODOS los usuarios que lo tengan)"
+            ),
+            variable=self.update_remove_from_unit_var
+        )
+        self.update_remove_from_unit_check.pack(
+            anchor="w", padx=8, pady=(0, 4)
+        )
+        self.update_remove_from_unit_check.state(["disabled"])
+
+        ttk.Checkbutton(
+            update_opts,
+            text=(
+                "Borrar todos los accesos que el usuario tenga y "
+                "NO estén en el CSV"
+            ),
+            variable=self.update_remove_missing_var
         ).pack(anchor="w", padx=8, pady=(0, 4))
 
         # ---------------------------------------------------------
@@ -546,6 +571,14 @@ class ImporterApp:
 
             self.msg_queue.put(("done", False, str(e)))
 
+    def _on_update_remove_listed_toggle(self):
+
+        if self.update_remove_listed_var.get():
+            self.update_remove_from_unit_check.state(["!disabled"])
+        else:
+            self.update_remove_from_unit_var.set(False)
+            self.update_remove_from_unit_check.state(["disabled"])
+
     def _start_update(self):
 
         creds = self._get_credentials()
@@ -565,7 +598,25 @@ class ImporterApp:
 
         installation_id, token = creds
         add_new = self.update_add_var.get()
-        remove_missing = self.update_remove_var.get()
+        remove_listed = self.update_remove_listed_var.get()
+        remove_from_unit = (
+            remove_listed and self.update_remove_from_unit_var.get()
+        )
+        remove_missing = self.update_remove_missing_var.get()
+
+        if remove_from_unit:
+
+            confirm = messagebox.askyesno(
+                "Confirmar borrado a nivel de unit",
+                "Vas a borrar el acceso entero a nivel de unit "
+                "para los accesos indicados en el CSV.\n\n"
+                "Esto afecta a TODOS los usuarios que tengan ese "
+                "acceso asignado, no solo a los del CSV.\n\n"
+                "¿Seguro que quieres continuar?"
+            )
+
+            if not confirm:
+                return
 
         self._save_current_config()
         self._set_running(True)
@@ -573,16 +624,18 @@ class ImporterApp:
         self.worker_thread = threading.Thread(
             target=self._run_update_worker,
             args=(
-                installation_id, token,
-                access_path, add_new, remove_missing
+                installation_id, token, access_path,
+                add_new, remove_listed, remove_from_unit,
+                remove_missing
             ),
             daemon=True
         )
         self.worker_thread.start()
 
     def _run_update_worker(
-        self, installation_id, token,
-        access_path, add_new, remove_missing
+        self, installation_id, token, access_path,
+        add_new, remove_listed, remove_from_unit,
+        remove_missing
     ):
 
         try:
@@ -599,6 +652,8 @@ class ImporterApp:
             importer.update_access(
                 rows,
                 add_new=add_new,
+                remove_listed=remove_listed,
+                remove_from_unit=remove_from_unit,
                 remove_missing=remove_missing
             )
 
@@ -607,6 +662,7 @@ class ImporterApp:
         except Exception as e:
 
             self.msg_queue.put(("done", False, str(e)))
+
 
     def _start_clear(self):
 

@@ -1207,11 +1207,26 @@ class Importer:
     #   2. Recorre TODOS los usuarios que ya existen en esa unit.
     #   3. Para cada usuario compara sus accesos actuales con los
     #      del CSV para esa unit:
-    #         - add_new=True    -> asigna los accesos del CSV que
-    #                              el usuario todavía no tiene.
-    #         - remove_missing=True -> borra los accesos que el
-    #                              usuario tiene y que ya NO están
-    #                              en el CSV.
+    #         - add_new=True         -> asigna los accesos del CSV
+    #                                    que el usuario todavía no
+    #                                    tiene.
+    #         - remove_listed=True   -> borra los accesos que el
+    #                                    usuario tiene Y que SÍ
+    #                                    están en el CSV. Por
+    #                                    defecto solo borra la
+    #                                    asignación al usuario.
+    #         - remove_from_unit=True (junto con remove_listed) ->
+    #                                    en vez de borrar solo la
+    #                                    asignación al usuario,
+    #                                    borra el access right
+    #                                    ENTERO a nivel de unit
+    #                                    (afecta a TODOS los
+    #                                    usuarios que lo tuvieran).
+    #         - remove_missing=True  -> borra los accesos que el
+    #                                    usuario tiene y que NO
+    #                                    están en el CSV (deja al
+    #                                    usuario solo con lo del
+    #                                    CSV).
     #
     # =========================================================
 
@@ -1358,6 +1373,8 @@ class Importer:
         self,
         rows,
         add_new=True,
+        remove_listed=False,
+        remove_from_unit=False,
         remove_missing=False
     ):
 
@@ -1367,7 +1384,10 @@ class Importer:
 
         logger.warning(
             f"Iniciando UPDATE "
-            f"(añadir={add_new}, borrar={remove_missing})"
+            f"(añadir={add_new}, "
+            f"borrar_del_csv={remove_listed}, "
+            f"borrar_a_nivel_unit={remove_from_unit}, "
+            f"borrar_lo_que_no_esta_en_csv={remove_missing})"
         )
 
         # -----------------------------------------------------
@@ -1401,6 +1421,7 @@ class Importer:
 
         total_added = 0
         total_removed = 0
+        total_removed_unit = 0
 
         for unit_display_name, unit_rows in rows_by_unit.items():
 
@@ -1502,7 +1523,43 @@ class Importer:
                         total_added += 1
 
                 # -----------------------------------------------
-                # BORRAR ACCESOS QUE YA NO ESTÁN EN EL CSV
+                # BORRAR (SOLO LA ASIGNACIÓN AL USUARIO) LOS
+                # ACCESOS QUE SÍ ESTÁN EN EL CSV. Si además hay
+                # que borrar el access right entero a nivel de
+                # unit (remove_from_unit), esto es un paso
+                # PREVIO obligatorio: la API no deja borrar un
+                # access right mientras siga asociado a algún
+                # usuario, así que primero hay que desasignarlo
+                # de TODOS los usuarios de la unit.
+                # -----------------------------------------------
+
+                if remove_listed:
+
+                    for key in desired:
+
+                        association_name = current_by_name.get(key)
+
+                        if not association_name:
+                            continue
+
+                        print(
+                            f"  - Borrando acceso -> {key}"
+                        )
+
+                        self.api.delete_user_access_right(
+                            association_name
+                        )
+
+                        logger.info(
+                            f"Acceso borrado a {display_name}: "
+                            f"{key}"
+                        )
+
+                        total_removed += 1
+
+                # -----------------------------------------------
+                # BORRAR (SOLO AL USUARIO) LOS ACCESOS QUE EL
+                # USUARIO TENGA Y QUE NO ESTÉN EN EL CSV
                 # -----------------------------------------------
 
                 if remove_missing:
@@ -1527,6 +1584,35 @@ class Importer:
 
                         total_removed += 1
 
+            # ---------------------------------------------------
+            # 3. BORRAR A NIVEL DE UNIT LOS ACCESS RIGHTS DEL
+            # CSV. Esto los borra ENTERAMENTE (afecta a TODOS
+            # los usuarios que los tuvieran, no solo a los del
+            # CSV). Se hace DESPUÉS de recorrer a todos los
+            # usuarios, porque la API no permite borrar un
+            # access right mientras siga asociado a alguien.
+            # ---------------------------------------------------
+
+            if remove_listed and remove_from_unit:
+
+                for key, access_right_name in desired.items():
+
+                    print(
+                        f"  -- Borrando access right "
+                        f"(a nivel de unit) -> {key}"
+                    )
+
+                    self.api.delete_access_right(
+                        access_right_name
+                    )
+
+                    logger.info(
+                        f"Access right borrado a nivel de unit "
+                        f"en '{unit_display_name}': {key}"
+                    )
+
+                    total_removed_unit += 1
+
         print(
             "\n================================"
         )
@@ -1534,7 +1620,9 @@ class Importer:
         print(
             f"UPDATE FINALIZADO "
             f"(accesos añadidos: {total_added}, "
-            f"accesos borrados: {total_removed})"
+            f"accesos borrados a usuarios: {total_removed}, "
+            f"access rights borrados a nivel de unit: "
+            f"{total_removed_unit})"
         )
 
         print(
@@ -1544,11 +1632,14 @@ class Importer:
         logger.warning(
             f"UPDATE FINALIZADO "
             f"(accesos añadidos: {total_added}, "
-            f"accesos borrados: {total_removed})"
+            f"accesos borrados a usuarios: {total_removed}, "
+            f"access rights borrados a nivel de unit: "
+            f"{total_removed_unit})"
         )
 
     # =========================================================
     # CLEAR UNITS
+
     # =========================================================
 
     def clear_units(self):

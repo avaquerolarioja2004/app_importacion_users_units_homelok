@@ -398,6 +398,24 @@ class SaltoAPI:
         )
 
     # =========================================================
+    # DELETE ACCESS RIGHT (a nivel de unit, no solo la
+    # asignación de un usuario concreto: borra el access
+    # right entero, afecta a TODOS los usuarios que lo tengan)
+    # =========================================================
+
+    def delete_access_right(
+        self,
+        access_right_name
+    ):
+
+        endpoint = f"/{access_right_name}"
+
+        return self._request_with_retry(
+            "DELETE",
+            endpoint
+        )
+
+    # =========================================================
     # ACCESS POINT GROUPS
     # =========================================================
 
